@@ -1,0 +1,7 @@
+{
+  "name": "terrain-tool",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "react-vite"
+}
