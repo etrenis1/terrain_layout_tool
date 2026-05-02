@@ -3,17 +3,29 @@
 const { app, BrowserWindow, Menu, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const fs = require('fs');
 
 // Required for Three.js WebGL to initialise correctly in packaged Electron apps.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 
+// logUpdate writes to %APPDATA%\Terrain Layout Tool\updater.log so it's
+// visible after the fact even when DevTools isn't open.
+let logFilePath = null;
+function logUpdate(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  if (logFilePath) {
+    try { fs.appendFileSync(logFilePath, line); } catch (_) {}
+  }
+  console.log(line.trim());
+}
+
 autoUpdater.logger = {
-  info:  (m) => console.log('[updater]',  m),
-  warn:  (m) => console.warn('[updater]',  m),
-  error: (m) => console.error('[updater]', m),
-  debug: (m) => console.log('[updater:debug]', m),
+  info:  (m) => logUpdate(`INFO  ${m}`),
+  warn:  (m) => logUpdate(`WARN  ${m}`),
+  error: (m) => logUpdate(`ERROR ${m}`),
+  debug: (m) => logUpdate(`DEBUG ${m}`),
 };
 
 function createWindow() {
@@ -54,17 +66,20 @@ function createWindow() {
 }
 
 function setupAutoUpdater(win) {
-  // Only run in packaged app — not during development.
+  // app.getPath is only valid after app is ready, so set logFilePath here.
+  logFilePath = path.join(app.getPath('userData'), 'updater.log');
+  logUpdate(`app version: ${app.getVersion()}, isPackaged: ${app.isPackaged}`);
+
   if (!app.isPackaged) {
-    console.log('[updater] skipped — app is not packaged');
+    logUpdate('skipped — app is not packaged');
     return;
   }
 
-  autoUpdater.on('checking-for-update',  () => console.log('[updater] checking for update…'));
-  autoUpdater.on('update-available',     (info) => console.log('[updater] update available:', info.version));
-  autoUpdater.on('update-not-available', (info) => console.log('[updater] up to date:', info.version));
-  autoUpdater.on('error',                (err)  => console.error('[updater] error:', err));
-  autoUpdater.on('download-progress',    (p)    => console.log(`[updater] downloading… ${Math.round(p.percent)}%`));
+  autoUpdater.on('checking-for-update',  ()     => logUpdate('checking for update…'));
+  autoUpdater.on('update-available',     (info) => logUpdate(`update available: ${info.version}`));
+  autoUpdater.on('update-not-available', (info) => logUpdate(`up to date: ${info.version}`));
+  autoUpdater.on('error',                (err)  => logUpdate(`ERROR: ${err}`));
+  autoUpdater.on('download-progress',    (p)    => logUpdate(`downloading… ${Math.round(p.percent)}%`));
 
   autoUpdater.on('update-downloaded', () => {
     dialog
@@ -83,7 +98,7 @@ function setupAutoUpdater(win) {
   });
 
   autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[updater] checkForUpdates failed:', err);
+    logUpdate(`checkForUpdates failed: ${err}`);
   });
 }
 

@@ -11,6 +11,9 @@ export default defineConfig({
     react(),
     legacy()
   ],
+  resolve: {
+    dedupe: ['three'],
+  },
   test: {
     globals: true,
     environment: 'jsdom',
