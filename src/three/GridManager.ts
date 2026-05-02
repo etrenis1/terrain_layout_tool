@@ -28,28 +28,39 @@ export class GridManager {
     scene.add(this.highlightMesh);
   }
 
-  snapToGrid(worldX: number, worldZ: number): { x: number; z: number } {
+  // Snap worldX/Z to the correct tile center based on cell-count parity.
+  // Odd-cell dimensions snap to cell centers (e.g. 12.5, 37.5 …);
+  // even-cell dimensions snap to grid lines (e.g. 0, 25, 50 …).
+  snapForTile(worldX: number, worldZ: number, widthCells: number, depthCells: number): { x: number; z: number } {
     return {
-      x: Math.round(worldX / GRID_SIZE) * GRID_SIZE,
-      z: Math.round(worldZ / GRID_SIZE) * GRID_SIZE,
+      x: this.snapAxis(worldX, widthCells),
+      z: this.snapAxis(worldZ, depthCells),
     };
   }
 
-  // Returns integer grid coordinates — Math.round guards against floating-point drift
-  // so cell key strings always use clean integers.
-  worldToGrid(snappedX: number, snappedZ: number): { x: number; z: number } {
+  private snapAxis(value: number, cells: number): number {
+    if (cells % 2 === 1) {
+      return Math.round((value - GRID_SIZE / 2) / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+    }
+    return Math.round(value / GRID_SIZE) * GRID_SIZE;
+  }
+
+  // Anchor cell = top-left cell of the tile's footprint, derived from its world center.
+  worldToAnchorCell(centerX: number, centerZ: number, widthCells: number, depthCells: number): { x: number; z: number } {
     return {
-      x: Math.round(snappedX / GRID_SIZE),
-      z: Math.round(snappedZ / GRID_SIZE),
+      x: Math.round(centerX / GRID_SIZE - widthCells / 2),
+      z: Math.round(centerZ / GRID_SIZE - depthCells / 2),
     };
   }
 
-  gridToWorld(gridX: number, gridZ: number): { x: number; z: number } {
-    return { x: gridX * GRID_SIZE, z: gridZ * GRID_SIZE };
+  // World center of a tile given its anchor cell and footprint dimensions.
+  anchorCellToWorld(anchorX: number, anchorZ: number, widthCells: number, depthCells: number): { x: number; z: number } {
+    return {
+      x: (anchorX + widthCells / 2) * GRID_SIZE,
+      z: (anchorZ + depthCells / 2) * GRID_SIZE,
+    };
   }
 
-  // footprintX/Z are the tile's actual XZ extents in world units after rotation.
-  // The highlight is scaled to cover exactly those cells.
   setHighlight(worldX: number, worldZ: number, footprintX = GRID_SIZE, footprintZ = GRID_SIZE): void {
     this.highlightMesh.position.x = worldX;
     this.highlightMesh.position.z = worldZ;

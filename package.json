@@ -1,7 +1,7 @@
 {
   "name": "terrain-tool",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "description": "Grid-based 3D tabletop terrain layout tool",

@@ -49,14 +49,12 @@ function computeRotatedBounds(
   };
 }
 
-// Cell keys use integer grid coords so floating-point drift never creates key mismatches.
-function getOccupiedCells(gx: number, gz: number, widthCells: number, depthCells: number): string[] {
-  const halfW = Math.floor(widthCells / 2);
-  const halfD = Math.floor(depthCells / 2);
+// Enumerate all cell keys occupied by a tile given its anchor (top-left) cell.
+function getOccupiedCells(anchorX: number, anchorZ: number, widthCells: number, depthCells: number): string[] {
   const cells: string[] = [];
-  for (let dx = -halfW; dx < widthCells - halfW; dx++) {
-    for (let dz = -halfD; dz < depthCells - halfD; dz++) {
-      cells.push(`${gx + dx},${gz + dz}`);
+  for (let dx = 0; dx < widthCells; dx++) {
+    for (let dz = 0; dz < depthCells; dz++) {
+      cells.push(`${anchorX + dx},${anchorZ + dz}`);
     }
   }
   return cells;
@@ -166,14 +164,14 @@ export class PlacementManager {
 
   updateGhostPosition(worldX: number, worldZ: number): void {
     if (!this.ghostMesh || !this.activeTile) return;
-    const snapped = this.gridManager.snapToGrid(worldX, worldZ);
     const bounds = this.getBounds();
+    const snapped = this.gridManager.snapForTile(worldX, worldZ, bounds.widthCells, bounds.depthCells);
 
     this.ghostMesh.position.set(snapped.x, bounds.yOffset, snapped.z);
     this.ghostMesh.visible = true;
 
-    const gridPos = this.gridManager.worldToGrid(snapped.x, snapped.z);
-    const cells = getOccupiedCells(gridPos.x, gridPos.z, bounds.widthCells, bounds.depthCells);
+    const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
+    const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
     this.isBlocked = cells.some((c) => this.occupiedCells.has(c));
     this.ghostMesh.material = this.isBlocked ? this.ghostMaterialBlocked : this.ghostMaterialNormal;
 
@@ -188,11 +186,11 @@ export class PlacementManager {
   place(worldX: number, worldZ: number): PlacedTile | null {
     if (!this.activeTile || !this.activeGeometry || this.isBlocked) return null;
 
-    const snapped = this.gridManager.snapToGrid(worldX, worldZ);
-    const gridPos = this.gridManager.worldToGrid(snapped.x, snapped.z);
     const bounds = this.getBounds();
+    const snapped = this.gridManager.snapForTile(worldX, worldZ, bounds.widthCells, bounds.depthCells);
+    const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
 
-    const cells = getOccupiedCells(gridPos.x, gridPos.z, bounds.widthCells, bounds.depthCells);
+    const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
     if (cells.some((c) => this.occupiedCells.has(c))) return null;
 
     const instanceId = crypto.randomUUID();
@@ -216,7 +214,7 @@ export class PlacementManager {
     return {
       instanceId,
       tileId: this.activeTile.id,
-      position: gridPos,
+      position: anchor,
       rotation: { x: this.rotX, y: this.rotY, z: this.rotZ },
     };
   }
@@ -278,7 +276,8 @@ export class PlacementManager {
       const bounds = computeRotatedBounds(geo, pt.rotation.x, pt.rotation.y, pt.rotation.z);
       const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7, metalness: 0.1 });
       const mesh = new THREE.Mesh(geo, mat);
-      const worldPos = this.gridManager.gridToWorld(pt.position.x, pt.position.z);
+      // pt.position stores the anchor cell; convert to world center using tile dimensions.
+      const worldPos = this.gridManager.anchorCellToWorld(pt.position.x, pt.position.z, bounds.widthCells, bounds.depthCells);
       mesh.position.set(worldPos.x, bounds.yOffset, worldPos.z);
       mesh.rotation.set(
         THREE.MathUtils.degToRad(pt.rotation.x),
