@@ -9,8 +9,12 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 
-// Silence the auto-updater's verbose logging in production.
-autoUpdater.logger = null;
+autoUpdater.logger = {
+  info:  (m) => console.log('[updater]',  m),
+  warn:  (m) => console.warn('[updater]',  m),
+  error: (m) => console.error('[updater]', m),
+  debug: (m) => console.log('[updater:debug]', m),
+};
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -51,11 +55,16 @@ function createWindow() {
 
 function setupAutoUpdater(win) {
   // Only run in packaged app — not during development.
-  if (!app.isPackaged) return;
+  if (!app.isPackaged) {
+    console.log('[updater] skipped — app is not packaged');
+    return;
+  }
 
-  autoUpdater.checkForUpdates().catch(() => {
-    // Silently ignore network errors (e.g. no internet connection).
-  });
+  autoUpdater.on('checking-for-update',  () => console.log('[updater] checking for update…'));
+  autoUpdater.on('update-available',     (info) => console.log('[updater] update available:', info.version));
+  autoUpdater.on('update-not-available', (info) => console.log('[updater] up to date:', info.version));
+  autoUpdater.on('error',                (err)  => console.error('[updater] error:', err));
+  autoUpdater.on('download-progress',    (p)    => console.log(`[updater] downloading… ${Math.round(p.percent)}%`));
 
   autoUpdater.on('update-downloaded', () => {
     dialog
@@ -71,6 +80,10 @@ function setupAutoUpdater(win) {
       .then(({ response }) => {
         if (response === 0) autoUpdater.quitAndInstall();
       });
+  });
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[updater] checkForUpdates failed:', err);
   });
 }
 
