@@ -69,21 +69,20 @@ const TileLibraryPanel: React.FC<Props> = ({
   const draggingRef = useRef<{ type: 'tile' | 'folder'; id: string } | null>(null);
 
   useEffect(() => {
-    // Prevent Electron from navigating to the dropped file/folder (blank white page).
+    // Use capture phase so these fire before any element's stopPropagation can block
+    // them — this is what prevents Electron navigating to the dropped folder.
     const suppressDefault = (e: DragEvent) => e.preventDefault();
-    document.addEventListener('dragover', suppressDefault);
-    document.addEventListener('drop', suppressDefault);
+    document.addEventListener('dragover', suppressDefault, true);
+    document.addEventListener('drop', suppressDefault, true);
 
-    // Reset the drop overlay whenever a drag ends anywhere — covers cases where
-    // the drop lands on a child that stops propagation before our handler runs.
     const resetOverlay = () => setIsExternalDragOver(false);
-    document.addEventListener('drop', resetOverlay);
+    document.addEventListener('drop', resetOverlay, true);
     window.addEventListener('dragend', resetOverlay);
 
     return () => {
-      document.removeEventListener('dragover', suppressDefault);
-      document.removeEventListener('drop', suppressDefault);
-      document.removeEventListener('drop', resetOverlay);
+      document.removeEventListener('dragover', suppressDefault, true);
+      document.removeEventListener('drop', suppressDefault, true);
+      document.removeEventListener('drop', resetOverlay, true);
       window.removeEventListener('dragend', resetOverlay);
     };
   }, []);
@@ -161,16 +160,20 @@ const TileLibraryPanel: React.FC<Props> = ({
     }
   };
 
+  const importFromDrop = useCallback(async (e: React.DragEvent, folderId: string | null) => {
+    const items = Array.from(e.dataTransfer.items).filter((i) => i.kind === 'file');
+    const entries = items.map((i) => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[];
+    const nested = await Promise.all(entries.map(collectSTLsFromEntry));
+    const files = nested.flat();
+    if (files.length > 0) onImport(files, folderId);
+  }, [onImport]);
+
   const handlePanelDrop = async (e: React.DragEvent) => {
     if (!isExternalDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setIsExternalDragOver(false);
-    const items = Array.from(e.dataTransfer.items).filter((i) => i.kind === 'file');
-    const entries = items.map((i) => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[];
-    const nested = await Promise.all(entries.map(collectSTLsFromEntry));
-    const files = nested.flat();
-    if (files.length > 0) onImport(files, importFolderId);
+    await importFromDrop(e, importFolderId);
   };
 
   const importFolderName = importFolderId
@@ -202,7 +205,17 @@ const TileLibraryPanel: React.FC<Props> = ({
               setDragOverId(null);
             }
           }}
-          onDrop={(e) => { e.stopPropagation(); handleDrop(folder.id); }}
+          onDrop={(e) => {
+            e.stopPropagation();
+            if (isExternalDrag(e)) {
+              e.preventDefault();
+              setIsExternalDragOver(false);
+              setDragOverId(null);
+              importFromDrop(e, folder.id);
+            } else {
+              handleDrop(folder.id);
+            }
+          }}
           style={{
             display: 'flex',
             alignItems: 'center',
