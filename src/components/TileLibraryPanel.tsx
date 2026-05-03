@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { IonButton, IonIcon, IonBadge, IonNote, IonItemDivider, IonLabel } from '@ionic/react';
 import {
   addOutline,
@@ -67,6 +67,26 @@ const TileLibraryPanel: React.FC<Props> = ({
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [isExternalDragOver, setIsExternalDragOver] = useState(false);
   const draggingRef = useRef<{ type: 'tile' | 'folder'; id: string } | null>(null);
+
+  useEffect(() => {
+    // Prevent Electron from navigating to the dropped file/folder (blank white page).
+    const suppressDefault = (e: DragEvent) => e.preventDefault();
+    document.addEventListener('dragover', suppressDefault);
+    document.addEventListener('drop', suppressDefault);
+
+    // Reset the drop overlay whenever a drag ends anywhere — covers cases where
+    // the drop lands on a child that stops propagation before our handler runs.
+    const resetOverlay = () => setIsExternalDragOver(false);
+    document.addEventListener('drop', resetOverlay);
+    window.addEventListener('dragend', resetOverlay);
+
+    return () => {
+      document.removeEventListener('dragover', suppressDefault);
+      document.removeEventListener('drop', suppressDefault);
+      document.removeEventListener('drop', resetOverlay);
+      window.removeEventListener('dragend', resetOverlay);
+    };
+  }, []);
 
   const toggleExpand = (folderId: string) => {
     setExpanded(prev => {
