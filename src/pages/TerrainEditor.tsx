@@ -44,16 +44,34 @@ const TerrainEditor: React.FC = () => {
   }, []);
 
   const handleImport = useCallback(
-    async (file: File, folderId: string | null) => {
-      try {
-        const { tile: baseTile, geometry } = await importSTL(file);
-        const tile: Tile = { ...baseTile, folderId };
-        await saveTile(tile, geometry);
-        setTiles((prev) => [...prev, tile]);
-        present({ message: `"${tile.name}" imported successfully`, duration: 2000, color: 'success' });
-      } catch (err) {
-        console.error('STL import failed:', err);
-        present({ message: 'Failed to import STL file', duration: 3000, color: 'danger' });
+    async (files: File[], folderId: string | null) => {
+      let successCount = 0;
+      let failCount = 0;
+      for (const file of files) {
+        try {
+          const { tile: baseTile, geometry } = await importSTL(file);
+          const tile: Tile = { ...baseTile, folderId };
+          await saveTile(tile, geometry);
+          setTiles((prev) => [...prev, tile]);
+          successCount++;
+        } catch (err) {
+          console.error('STL import failed:', file.name, err);
+          failCount++;
+        }
+      }
+      if (files.length === 1) {
+        if (successCount > 0) {
+          present({ message: `"${files[0].name.replace(/\.stl$/i, '')}" imported`, duration: 2000, color: 'success' });
+        } else {
+          present({ message: 'Failed to import STL file', duration: 3000, color: 'danger' });
+        }
+      } else {
+        if (successCount > 0) {
+          const msg = `${successCount} tile${successCount !== 1 ? 's' : ''} imported${failCount > 0 ? `, ${failCount} failed` : ''}`;
+          present({ message: msg, duration: 2500, color: failCount > 0 ? 'warning' : 'success' });
+        } else {
+          present({ message: 'All imports failed', duration: 3000, color: 'danger' });
+        }
       }
     },
     [present],

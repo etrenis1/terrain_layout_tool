@@ -17,13 +17,40 @@ interface Props {
   folders: Folder[];
   activeTileId: string | null;
   onSelect: (tile: Tile) => void;
-  onImport: (file: File, folderId: string | null) => void;
+  onImport: (files: File[], folderId: string | null) => void;
   onDelete: (tileId: string) => void;
   onCreateFolder: (name: string, parentId: string | null) => string;
   onRenameFolder: (folderId: string, name: string) => void;
   onDeleteFolder: (folderId: string) => void;
   onMoveTile: (tileId: string, targetFolderId: string | null) => void;
   onMoveFolder: (folderId: string, targetParentId: string | null) => void;
+}
+
+async function readAllEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  const all: FileSystemEntry[] = [];
+  for (;;) {
+    const batch: FileSystemEntry[] = await new Promise((res) =>
+      reader.readEntries(res, () => res([])),
+    );
+    if (batch.length === 0) break;
+    all.push(...batch);
+  }
+  return all;
+}
+
+async function collectSTLsFromEntry(entry: FileSystemEntry): Promise<File[]> {
+  if (entry.isFile) {
+    if (!entry.name.toLowerCase().endsWith('.stl')) return [];
+    return new Promise<File[]>((res) =>
+      (entry as FileSystemFileEntry).file((f) => res([f]), () => res([])),
+    );
+  }
+  if (entry.isDirectory) {
+    const entries = await readAllEntries((entry as FileSystemDirectoryEntry).createReader());
+    const nested = await Promise.all(entries.map(collectSTLsFromEntry));
+    return nested.flat();
+  }
+  return [];
 }
 
 const TileLibraryPanel: React.FC<Props> = ({
@@ -38,6 +65,7 @@ const TileLibraryPanel: React.FC<Props> = ({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
+  const [isExternalDragOver, setIsExternalDragOver] = useState(false);
   const draggingRef = useRef<{ type: 'tile' | 'folder'; id: string } | null>(null);
 
   const toggleExpand = (folderId: string) => {
@@ -93,6 +121,36 @@ const TileLibraryPanel: React.FC<Props> = ({
     if (parentId) setExpanded(prev => new Set([...prev, parentId]));
     setRenamingId(id);
     setRenameValue('New Folder');
+  };
+
+  // External file/folder drag-and-drop handlers
+  const isExternalDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer.types).includes('Files') && draggingRef.current === null;
+
+  const handlePanelDragOver = (e: React.DragEvent) => {
+    if (!isExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsExternalDragOver(true);
+  };
+
+  const handlePanelDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsExternalDragOver(false);
+    }
+  };
+
+  const handlePanelDrop = async (e: React.DragEvent) => {
+    if (!isExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsExternalDragOver(false);
+    const items = Array.from(e.dataTransfer.items).filter((i) => i.kind === 'file');
+    const entries = items.map((i) => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[];
+    const nested = await Promise.all(entries.map(collectSTLsFromEntry));
+    const files = nested.flat();
+    if (files.length > 0) onImport(files, importFolderId);
   };
 
   const importFolderName = importFolderId
@@ -269,7 +327,32 @@ const TileLibraryPanel: React.FC<Props> = ({
   const rootTiles = tiles.filter(t => t.folderId === null);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}
+      onDragOver={handlePanelDragOver}
+      onDragLeave={handlePanelDragLeave}
+      onDrop={handlePanelDrop}
+    >
+      {isExternalDragOver && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(var(--ion-color-primary-rgb), 0.18)',
+          border: '2px dashed var(--ion-color-primary)',
+          borderRadius: '4px',
+          pointerEvents: 'none',
+        }}>
+          <span style={{ color: 'var(--ion-color-primary)', fontWeight: 600, fontSize: '0.9rem', textAlign: 'center', padding: '0 16px' }}>
+            Drop STL files or folders to import
+            {importFolderName ? ` into "${importFolderName}"` : ''}
+          </span>
+        </div>
+      )}
+
       <IonItemDivider sticky>
         <IonLabel>Tile Library</IonLabel>
       </IonItemDivider>
@@ -287,10 +370,11 @@ const TileLibraryPanel: React.FC<Props> = ({
           ref={fileInputRef}
           type="file"
           accept=".stl"
+          multiple
           style={{ display: 'none' }}
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) onImport(file, importFolderId);
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) onImport(files, importFolderId);
             e.target.value = '';
           }}
         />
@@ -302,7 +386,9 @@ const TileLibraryPanel: React.FC<Props> = ({
           overflowY: 'auto',
           backgroundColor: dragOverId === 'root' ? 'rgba(var(--ion-color-primary-rgb), 0.05)' : 'transparent',
         }}
-        onDragOver={(e) => { e.preventDefault(); setDragOverId('root'); }}
+        onDragOver={(e) => {
+          if (draggingRef.current) { e.preventDefault(); setDragOverId('root'); }
+        }}
         onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null);
         }}
@@ -311,7 +397,7 @@ const TileLibraryPanel: React.FC<Props> = ({
         {tiles.length === 0 && folders.length === 0 && (
           <div style={{ padding: '16px 8px' }}>
             <IonNote style={{ fontSize: '0.85rem' }}>
-              No tiles yet. Import an STL file to begin.
+              No tiles yet. Import STL files or drag a folder here to begin.
             </IonNote>
           </div>
         )}
@@ -322,7 +408,7 @@ const TileLibraryPanel: React.FC<Props> = ({
       <div style={{ padding: '6px 8px', fontSize: '0.72rem', color: 'var(--ion-color-medium)', borderTop: '1px solid var(--ion-color-light)', lineHeight: 1.4 }}>
         <div>WASD pan · scroll zoom · drag orbit</div>
         <div>Select tile · ←→ Y-rot · ↑↓ X-rot · Shift+←→ Z-rot · Esc</div>
-        <div>Double-click folder name to rename · Drag to move</div>
+        <div>Double-click folder to rename · Drag to move · Drop folder to import</div>
       </div>
     </div>
   );
