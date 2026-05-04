@@ -5,8 +5,9 @@ import { GridManager, GRID_SIZE } from './GridManager';
 
 export type RotationAxis = 'x' | 'y' | 'z';
 
-function snap90(deg: number): number {
-  return ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+// Always snap to 45° granularity so 45° and 90° steps can be freely mixed.
+function snapDeg(deg: number): number {
+  return ((Math.round(deg / 45) * 45) % 360 + 360) % 360;
 }
 
 interface RotatedBounds {
@@ -38,8 +39,11 @@ function computeRotatedBounds(
   );
   const size = new THREE.Vector3();
   box.getSize(size);
-  const widthCells = Math.max(1, Math.round(size.x / GRID_SIZE));
-  const depthCells = Math.max(1, Math.round(size.z / GRID_SIZE));
+  // Use floor+threshold instead of round so that the √2 AABB inflation from a
+  // 45° rotation doesn't push a tile into a larger cell count than its logical
+  // footprint. A cell is only added when the overhang exceeds 30% of a cell.
+  const widthCells = Math.max(1, Math.floor(size.x / GRID_SIZE + 0.3));
+  const depthCells = Math.max(1, Math.floor(size.z / GRID_SIZE + 0.3));
   return {
     yOffset: -box.min.y,
     widthCells,
@@ -150,11 +154,11 @@ export class PlacementManager {
     this.ghostMesh.position.y = bounds.yOffset;
   }
 
-  rotateAxis(axis: RotationAxis, direction: 1 | -1): void {
-    const step = 90 * direction;
-    if (axis === 'x') this.rotX = snap90(this.rotX + step);
-    else if (axis === 'y') this.rotY = snap90(this.rotY + step);
-    else this.rotZ = snap90(this.rotZ + step);
+  rotateAxis(axis: RotationAxis, direction: 1 | -1, step: 45 | 90 = 90): void {
+    const delta = step * direction;
+    if (axis === 'x') this.rotX = snapDeg(this.rotX + delta);
+    else if (axis === 'y') this.rotY = snapDeg(this.rotY + delta);
+    else this.rotZ = snapDeg(this.rotZ + delta);
     this.applyGhostRotation();
   }
 

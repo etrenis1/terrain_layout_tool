@@ -440,7 +440,7 @@ const TileLibraryPanel: React.FC<Props> = ({
 
       <div style={{ padding: '6px 8px', fontSize: '0.72rem', color: 'var(--ion-color-medium)', borderTop: '1px solid var(--ion-color-light)', lineHeight: 1.4 }}>
         <div>WASD pan · scroll zoom · drag orbit</div>
-        <div>Select tile · ←→ Y-rot · ↑↓ X-rot · Shift+←→ Z-rot · Esc</div>
+        <div>Select tile · ←→ Y-rot 90° · Q/E Y-rot 45° · ↑↓ X-rot · Shift+←→ Z-rot · Esc</div>
         <div>Double-click folder to rename · Drag to move · Drop folder to import</div>
       </div>
     </div>

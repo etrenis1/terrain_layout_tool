@@ -125,19 +125,29 @@ export function useSceneManager(canvasRef: React.RefObject<HTMLCanvasElement | n
       switch (e.key) {
         case 'ArrowLeft':
           e.preventDefault();
-          pm.rotateAxis(e.shiftKey ? 'z' : 'y', -1);
+          pm.rotateAxis(e.shiftKey ? 'z' : 'y', -1, 90);
           break;
         case 'ArrowRight':
           e.preventDefault();
-          pm.rotateAxis(e.shiftKey ? 'z' : 'y', 1);
+          pm.rotateAxis(e.shiftKey ? 'z' : 'y', 1, 90);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          pm.rotateAxis('x', -1);
+          pm.rotateAxis('x', -1, 90);
           break;
         case 'ArrowDown':
           e.preventDefault();
-          pm.rotateAxis('x', 1);
+          pm.rotateAxis('x', 1, 90);
+          break;
+        case 'q':
+        case 'Q':
+          e.preventDefault();
+          pm.rotateAxis('y', -1, 45);
+          break;
+        case 'e':
+        case 'E':
+          e.preventDefault();
+          pm.rotateAxis('y', 1, 45);
           break;
         case 'Escape':
           pm.deactivate();
