@@ -12,7 +12,7 @@ function snapDeg(deg: number): number {
 
 // Grid-based AABB collision is only meaningful when every rotation axis is a
 // multiple of 90°. A tile at 45° has a diamond footprint — the rectangular
-// cell system can't represent it, so such tiles opt out of collision entirely.
+// cell system can't represent it.
 function isAxisAligned(rot: Rotation3D): boolean {
   return rot.x % 90 === 0 && rot.y % 90 === 0 && rot.z % 90 === 0;
 }
@@ -71,31 +71,6 @@ function getOccupiedCells(anchorX: number, anchorZ: number, widthCells: number, 
   return cells;
 }
 
-// 2D OBB overlap test (SAT) in the XZ plane.
-// hx/hz are the tile's half-extents along its own local X and Z axes (before Y rotation).
-// rotY_A / rotY_B are the Y-rotation angles in radians.
-// Returns true if the two OBBs overlap. Touching (gap == 0) counts as NOT overlapping.
-function obbOverlap2D(
-  cxA: number, czA: number, hxA: number, hzA: number, rotYA: number,
-  cxB: number, czB: number, hxB: number, hzB: number, rotYB: number,
-): boolean {
-  const cosA = Math.cos(rotYA), sinA = Math.sin(rotYA);
-  const cosB = Math.cos(rotYB), sinB = Math.sin(rotYB);
-  const dx = cxB - cxA, dz = czB - czA;
-  // Four separating axis candidates: local X and Z of each OBB.
-  const axes: [number, number][] = [
-    [cosA, sinA], [-sinA, cosA],
-    [cosB, sinB], [-sinB, cosB],
-  ];
-  for (const [ax, az] of axes) {
-    const projA = Math.abs(hxA * (cosA * ax + sinA * az)) + Math.abs(hzA * (-sinA * ax + cosA * az));
-    const projB = Math.abs(hxB * (cosB * ax + sinB * az)) + Math.abs(hzB * (-sinB * ax + cosB * az));
-    const sep = Math.abs(dx * ax + dz * az);
-    if (sep >= projA + projB) return false; // separating axis found — no overlap
-  }
-  return true; // no separating axis found — overlap
-}
-
 export class PlacementManager {
   private scene: THREE.Scene;
   private gridManager: GridManager;
@@ -108,10 +83,9 @@ export class PlacementManager {
   private rotZ = 0;
   private isBlocked = false;
   private cachedBounds: RotatedBounds | null = null;
-  private cachedHalfExtents: { hx: number; hz: number } | null = null;
 
   // Tracks which cells each placed tile occupies so removal is O(k) not O(n).
-  private placedMeshes: Map<string, { mesh: THREE.Mesh; tile: Tile; rotation: Rotation3D; hx: number; hz: number }> = new Map();
+  private placedMeshes: Map<string, { mesh: THREE.Mesh; tile: Tile; rotation: Rotation3D }> = new Map();
   private placedCells: Map<string, string[]> = new Map();
   private occupiedCells: Set<string> = new Set();
 
@@ -160,12 +134,6 @@ export class PlacementManager {
     return this.cachedBounds ?? { yOffset: 0, widthCells: 1, depthCells: 1, footprintX: GRID_SIZE, footprintZ: GRID_SIZE };
   }
 
-  // Returns tile's half-extents along its own local X/Z axes (Y rotation excluded).
-  private getNaturalHalfExtents(geo: THREE.BufferGeometry, rotX: number, rotZ: number): { hx: number; hz: number } {
-    const b = computeRotatedBounds(geo, rotX, 0, rotZ);
-    return { hx: b.footprintX / 2, hz: b.footprintZ / 2 };
-  }
-
   private createGhost(): void {
     if (!this.activeGeometry) return;
     this.ghostMesh = new THREE.Mesh(this.activeGeometry, this.ghostMaterialNormal);
@@ -184,7 +152,6 @@ export class PlacementManager {
   private applyGhostRotation(): void {
     if (!this.ghostMesh) return;
     this.cachedBounds = null; // invalidate cache whenever rotation changes
-    this.cachedHalfExtents = null;
     const bounds = this.getBounds();
     this.ghostMesh.rotation.set(
       THREE.MathUtils.degToRad(this.rotX),
@@ -214,39 +181,19 @@ export class PlacementManager {
     this.ghostMesh.position.set(snapped.x, bounds.yOffset, snapped.z);
     this.ghostMesh.visible = true;
 
-    // Always show AABB highlight so the snap position is visible regardless of rotation.
-    this.gridManager.setHighlight(snapped.x, snapped.z, bounds.footprintX, bounds.footprintZ);
-
     const currentRot = { x: this.rotX, y: this.rotY, z: this.rotZ };
-    const ghostAligned = isAxisAligned(currentRot);
-    let blocked = false;
-
-    // Case 1: cell-based check — axis-aligned ghost vs axis-aligned placed tiles.
-    if (ghostAligned) {
+    if (isAxisAligned(currentRot)) {
       const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
       const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
-      blocked = cells.some((c) => this.occupiedCells.has(c));
+      this.isBlocked = cells.some((c) => this.occupiedCells.has(c));
+      this.gridManager.setHighlight(snapped.x, snapped.z, bounds.footprintX, bounds.footprintZ);
+    } else {
+      // Non-axis-aligned: block only if another tile is already at the same snap position.
+      this.isBlocked = Array.from(this.placedMeshes.values()).some(
+        (e) => Math.abs(e.mesh.position.x - snapped.x) < 1 && Math.abs(e.mesh.position.z - snapped.z) < 1,
+      );
+      this.gridManager.setHighlight(snapped.x, snapped.z, bounds.footprintX, bounds.footprintZ);
     }
-
-    // Case 2+3: OBB check — covers everything the cell system misses:
-    //   (a) non-aligned ghost vs any placed tile
-    //   (b) aligned ghost vs non-aligned placed tiles (which store cells=[])
-    if (!blocked) {
-      if (!this.cachedHalfExtents)
-        this.cachedHalfExtents = this.getNaturalHalfExtents(this.activeGeometry!, this.rotX, this.rotZ);
-      const { hx: ghostHx, hz: ghostHz } = this.cachedHalfExtents;
-      const ghostRotYRad = THREE.MathUtils.degToRad(this.rotY);
-      for (const entry of this.placedMeshes.values()) {
-        if (ghostAligned && isAxisAligned(entry.rotation)) continue; // already handled above
-        if (obbOverlap2D(
-          snapped.x, snapped.z, ghostHx, ghostHz, ghostRotYRad,
-          entry.mesh.position.x, entry.mesh.position.z, entry.hx, entry.hz,
-          THREE.MathUtils.degToRad(entry.rotation.y),
-        )) { blocked = true; break; }
-      }
-    }
-
-    this.isBlocked = blocked;
     this.ghostMesh.material = this.isBlocked ? this.ghostMaterialBlocked : this.ghostMaterialNormal;
   }
 
@@ -266,22 +213,10 @@ export class PlacementManager {
     const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
     const cells = aligned ? getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells) : [];
 
-    // Cell-based check for axis-aligned tiles.
     if (aligned && cells.some((c) => this.occupiedCells.has(c))) return null;
-
-    // OBB check for anything the cell system misses (mirrors updateGhostPosition logic).
-    if (!this.cachedHalfExtents)
-      this.cachedHalfExtents = this.getNaturalHalfExtents(this.activeGeometry!, this.rotX, this.rotZ);
-    const { hx, hz } = this.cachedHalfExtents;
-    const ghostRotYRad = THREE.MathUtils.degToRad(this.rotY);
-    for (const entry of this.placedMeshes.values()) {
-      if (aligned && isAxisAligned(entry.rotation)) continue;
-      if (obbOverlap2D(
-        snapped.x, snapped.z, hx, hz, ghostRotYRad,
-        entry.mesh.position.x, entry.mesh.position.z, entry.hx, entry.hz,
-        THREE.MathUtils.degToRad(entry.rotation.y),
-      )) return null;
-    }
+    if (!aligned && Array.from(this.placedMeshes.values()).some(
+      (e) => Math.abs(e.mesh.position.x - snapped.x) < 1 && Math.abs(e.mesh.position.z - snapped.z) < 1,
+    )) return null;
 
     const instanceId = crypto.randomUUID();
     const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7, metalness: 0.1 });
@@ -297,7 +232,7 @@ export class PlacementManager {
     mesh.userData.instanceId = instanceId;
     this.scene.add(mesh);
 
-    this.placedMeshes.set(instanceId, { mesh, tile: this.activeTile, rotation, hx, hz });
+    this.placedMeshes.set(instanceId, { mesh, tile: this.activeTile, rotation });
     this.placedCells.set(instanceId, cells);
     cells.forEach((c) => this.occupiedCells.add(c));
 
@@ -348,7 +283,6 @@ export class PlacementManager {
     this.rotY = rotation.y;
     this.rotZ = rotation.z;
     this.cachedBounds = null;
-    this.cachedHalfExtents = null;
     this.createGhost();
 
     return tile.id;
@@ -365,10 +299,6 @@ export class PlacementManager {
       if (!geo || !tile) continue;
 
       const bounds = computeRotatedBounds(geo, pt.rotation.x, pt.rotation.y, pt.rotation.z);
-      const naturalBounds = computeRotatedBounds(geo, pt.rotation.x, 0, pt.rotation.z);
-      const hx = naturalBounds.footprintX / 2;
-      const hz = naturalBounds.footprintZ / 2;
-
       const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7, metalness: 0.1 });
       const mesh = new THREE.Mesh(geo, mat);
       // pt.position stores the anchor cell; convert to world center using tile dimensions.
@@ -386,7 +316,7 @@ export class PlacementManager {
 
       const aligned = isAxisAligned(pt.rotation);
       const cells = aligned ? getOccupiedCells(pt.position.x, pt.position.z, bounds.widthCells, bounds.depthCells) : [];
-      this.placedMeshes.set(pt.instanceId, { mesh, tile, rotation: pt.rotation, hx, hz });
+      this.placedMeshes.set(pt.instanceId, { mesh, tile, rotation: pt.rotation });
       this.placedCells.set(pt.instanceId, cells);
       cells.forEach((c) => this.occupiedCells.add(c));
     }
