@@ -10,6 +10,13 @@ function snapDeg(deg: number): number {
   return ((Math.round(deg / 45) * 45) % 360 + 360) % 360;
 }
 
+// Grid-based AABB collision is only meaningful when every rotation axis is a
+// multiple of 90°. A tile at 45° has a diamond footprint — the rectangular
+// cell system can't represent it, so such tiles opt out of collision entirely.
+function isAxisAligned(rot: Rotation3D): boolean {
+  return rot.x % 90 === 0 && rot.y % 90 === 0 && rot.z % 90 === 0;
+}
+
 interface RotatedBounds {
   yOffset: number;
   widthCells: number;
@@ -174,12 +181,18 @@ export class PlacementManager {
     this.ghostMesh.position.set(snapped.x, bounds.yOffset, snapped.z);
     this.ghostMesh.visible = true;
 
-    const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
-    const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
-    this.isBlocked = cells.some((c) => this.occupiedCells.has(c));
+    const currentRot = { x: this.rotX, y: this.rotY, z: this.rotZ };
+    if (isAxisAligned(currentRot)) {
+      const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
+      const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
+      this.isBlocked = cells.some((c) => this.occupiedCells.has(c));
+      this.gridManager.setHighlight(snapped.x, snapped.z, bounds.footprintX, bounds.footprintZ);
+    } else {
+      // Non-90° tile: no grid collision, hide the rectangular highlight.
+      this.isBlocked = false;
+      this.gridManager.hideHighlight();
+    }
     this.ghostMesh.material = this.isBlocked ? this.ghostMaterialBlocked : this.ghostMaterialNormal;
-
-    this.gridManager.setHighlight(snapped.x, snapped.z, bounds.footprintX, bounds.footprintZ);
   }
 
   hideGhost(): void {
@@ -190,12 +203,15 @@ export class PlacementManager {
   place(worldX: number, worldZ: number): PlacedTile | null {
     if (!this.activeTile || !this.activeGeometry || this.isBlocked) return null;
 
+    const rotation = { x: this.rotX, y: this.rotY, z: this.rotZ };
     const bounds = this.getBounds();
     const snapped = this.gridManager.snapForTile(worldX, worldZ, bounds.widthCells, bounds.depthCells);
-    const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
 
-    const cells = getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells);
-    if (cells.some((c) => this.occupiedCells.has(c))) return null;
+    // Non-axis-aligned tiles bypass the grid collision system entirely.
+    const aligned = isAxisAligned(rotation);
+    const anchor = this.gridManager.worldToAnchorCell(snapped.x, snapped.z, bounds.widthCells, bounds.depthCells);
+    const cells = aligned ? getOccupiedCells(anchor.x, anchor.z, bounds.widthCells, bounds.depthCells) : [];
+    if (aligned && cells.some((c) => this.occupiedCells.has(c))) return null;
 
     const instanceId = crypto.randomUUID();
     const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7, metalness: 0.1 });
@@ -211,7 +227,7 @@ export class PlacementManager {
     mesh.userData.instanceId = instanceId;
     this.scene.add(mesh);
 
-    this.placedMeshes.set(instanceId, { mesh, tile: this.activeTile, rotation: { x: this.rotX, y: this.rotY, z: this.rotZ } });
+    this.placedMeshes.set(instanceId, { mesh, tile: this.activeTile, rotation });
     this.placedCells.set(instanceId, cells);
     cells.forEach((c) => this.occupiedCells.add(c));
 
@@ -293,7 +309,8 @@ export class PlacementManager {
       mesh.userData.instanceId = pt.instanceId;
       this.scene.add(mesh);
 
-      const cells = getOccupiedCells(pt.position.x, pt.position.z, bounds.widthCells, bounds.depthCells);
+      const aligned = isAxisAligned(pt.rotation);
+      const cells = aligned ? getOccupiedCells(pt.position.x, pt.position.z, bounds.widthCells, bounds.depthCells) : [];
       this.placedMeshes.set(pt.instanceId, { mesh, tile, rotation: pt.rotation });
       this.placedCells.set(pt.instanceId, cells);
       cells.forEach((c) => this.occupiedCells.add(c));
