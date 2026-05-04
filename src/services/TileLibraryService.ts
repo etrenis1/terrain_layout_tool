@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Tile } from '../models/Tile';
 import { Folder } from '../models/Folder';
 
+const GRID_SIZE = 25;
+
 const DB_NAME = 'terrain-tool';
 const DB_VERSION = 1;
 const STORE_NAME = 'geometries';
@@ -88,6 +90,50 @@ export async function deleteTile(tileId: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+// Rescale a tile's geometry to a new grid footprint and update its metadata.
+// Returns the updated Tile, or null if not found.
+export async function resizeTile(tileId: string, newWidth: number, newDepth: number): Promise<Tile | null> {
+  const geo = await loadGeometry(tileId);
+  if (!geo) return null;
+
+  geo.computeBoundingBox();
+  const size = new THREE.Vector3();
+  geo.boundingBox!.getSize(size);
+
+  const scaleX = (newWidth * GRID_SIZE) / (size.x || 1);
+  const scaleZ = (newDepth * GRID_SIZE) / (size.z || 1);
+  geo.scale(Math.min(scaleX, scaleZ), Math.min(scaleX, scaleZ), Math.min(scaleX, scaleZ));
+
+  geo.computeBoundingBox();
+  const scaledSize = new THREE.Vector3();
+  geo.boundingBox!.getSize(scaledSize);
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+
+  const tiles = loadTileMetadata();
+  const tile = tiles.find((t) => t.id === tileId);
+  if (!tile) return null;
+
+  const updatedTile: Tile = {
+    ...tile,
+    dimensions: { width: newWidth, depth: newDepth, height: scaledSize.y },
+  };
+  saveAllTileMetadata(tiles.map((t) => (t.id === tileId ? updatedTile : t)));
+
+  const db = await getDB();
+  const positions = Array.from(geo.attributes.position.array as Float32Array);
+  const normals = geo.attributes.normal
+    ? Array.from(geo.attributes.normal.array as Float32Array)
+    : null;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put({ positions, normals }, tileId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return updatedTile;
 }
 
 // ─── Folder operations ───────────────────────────────────────────────────────

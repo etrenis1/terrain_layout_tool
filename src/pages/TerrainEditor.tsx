@@ -24,6 +24,7 @@ import {
   saveAllTileMetadata,
   loadFolders,
   saveFolders,
+  resizeTile,
 } from '../services/TileLibraryService';
 import { saveLayout } from '../services/LayoutLibraryService';
 import { exportTileListPDF } from '../services/PDFExportService';
@@ -35,7 +36,7 @@ const TerrainEditor: React.FC = () => {
   const [layoutsOpen, setLayoutsOpen] = useState(false);
   const [present] = useIonToast();
 
-  const { activeTileId, placedTiles, selectTile, clearScene, serializeScene, loadScene } =
+  const { activeTileId, placedTiles, selectTile, clearScene, serializeScene, loadScene, invalidateTile } =
     useSceneManager(canvasRef);
 
   useEffect(() => {
@@ -135,6 +136,14 @@ const TerrainEditor: React.FC = () => {
     });
   }, []);
 
+  const handleResizeTile = useCallback(async (tileId: string, w: number, d: number) => {
+    const updated = await resizeTile(tileId, w, d);
+    if (updated) {
+      setTiles((prev) => prev.map((t) => (t.id === tileId ? updated : t)));
+      invalidateTile(tileId);
+    }
+  }, [invalidateTile]);
+
   const handleMoveFolder = useCallback((folderId: string, targetParentId: string | null) => {
     setFolders((prev) => {
       const next = prev.map((f) => (f.id === folderId ? { ...f, parentId: targetParentId } : f));
@@ -209,6 +218,7 @@ const TerrainEditor: React.FC = () => {
                 onSelect={selectTile}
                 onImport={handleImport}
                 onDelete={handleDelete}
+                onResize={handleResizeTile}
                 onCreateFolder={handleCreateFolder}
                 onRenameFolder={handleRenameFolder}
                 onDeleteFolder={handleDeleteFolder}

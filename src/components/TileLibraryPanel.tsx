@@ -8,6 +8,8 @@ import {
   addCircleOutline,
   chevronForwardOutline,
   chevronDownOutline,
+  createOutline,
+  checkmarkOutline,
 } from 'ionicons/icons';
 import { Tile } from '../models/Tile';
 import { Folder } from '../models/Folder';
@@ -19,6 +21,7 @@ interface Props {
   onSelect: (tile: Tile) => void;
   onImport: (files: File[], folderId: string | null) => void;
   onDelete: (tileId: string) => void;
+  onResize: (tileId: string, w: number, d: number) => void;
   onCreateFolder: (name: string, parentId: string | null) => string;
   onRenameFolder: (folderId: string, name: string) => void;
   onDeleteFolder: (folderId: string) => void;
@@ -55,7 +58,7 @@ async function collectSTLsFromEntry(entry: FileSystemEntry): Promise<File[]> {
 
 const TileLibraryPanel: React.FC<Props> = ({
   tiles, folders, activeTileId,
-  onSelect, onImport, onDelete,
+  onSelect, onImport, onDelete, onResize,
   onCreateFolder, onRenameFolder, onDeleteFolder,
   onMoveTile, onMoveFolder,
 }) => {
@@ -67,6 +70,9 @@ const TileLibraryPanel: React.FC<Props> = ({
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null);
   const [isExternalDragOver, setIsExternalDragOver] = useState(false);
   const draggingRef = useRef<{ type: 'tile' | 'folder'; id: string } | null>(null);
+  const [resizingId, setResizingId] = useState<string | null>(null);
+  const [resizeW, setResizeW] = useState(1);
+  const [resizeD, setResizeD] = useState(1);
 
   useEffect(() => {
     // Use capture phase so these fire before any element's stopPropagation can block
@@ -310,20 +316,27 @@ const TileLibraryPanel: React.FC<Props> = ({
 
   const renderTile = (tile: Tile, depth: number): React.ReactNode => {
     const isActive = activeTileId === tile.id;
+    const isResizing = resizingId === tile.id;
+
+    const commitResize = () => {
+      if (resizeW >= 1 && resizeD >= 1) onResize(tile.id, resizeW, resizeD);
+      setResizingId(null);
+    };
+
     return (
       <div
         key={tile.id}
-        draggable
+        draggable={!isResizing}
         onDragStart={(e) => {
           draggingRef.current = { type: 'tile', id: tile.id };
           e.dataTransfer.effectAllowed = 'move';
         }}
-        onClick={() => onSelect(tile)}
+        onClick={() => { if (!isResizing) onSelect(tile); }}
         style={{
           display: 'flex',
           alignItems: 'center',
           padding: `5px 8px 5px ${8 + depth * 16}px`,
-          cursor: 'pointer',
+          cursor: isResizing ? 'default' : 'pointer',
           backgroundColor: isActive ? 'var(--ion-color-primary)' : 'transparent',
           color: isActive ? 'var(--ion-color-primary-contrast)' : 'inherit',
           borderBottom: '1px solid var(--ion-color-light)',
@@ -335,13 +348,69 @@ const TileLibraryPanel: React.FC<Props> = ({
           <div style={{ fontSize: '0.875rem', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {tile.name}
           </div>
-          <div style={{ fontSize: '0.72rem', opacity: 0.7 }}>
-            {tile.dimensions.width}×{tile.dimensions.depth} cells
-          </div>
+          {!isResizing && (
+            <div style={{ fontSize: '0.72rem', opacity: 0.7 }}>
+              {tile.dimensions.width}×{tile.dimensions.depth} cells
+            </div>
+          )}
+          {isResizing && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }} onClick={(e) => e.stopPropagation()}>
+              <input
+                autoFocus
+                type="number"
+                min={1}
+                max={20}
+                value={resizeW}
+                onChange={(e) => setResizeW(Math.max(1, parseInt(e.target.value) || 1))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitResize();
+                  if (e.key === 'Escape') setResizingId(null);
+                  e.stopPropagation();
+                }}
+                style={{ width: '38px', fontSize: '0.75rem', padding: '1px 3px', borderRadius: '3px', border: '1px solid var(--ion-color-primary)', background: 'var(--ion-color-light)', color: 'var(--ion-color-dark)', textAlign: 'center' }}
+              />
+              <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>×</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={resizeD}
+                onChange={(e) => setResizeD(Math.max(1, parseInt(e.target.value) || 1))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitResize();
+                  if (e.key === 'Escape') setResizingId(null);
+                  e.stopPropagation();
+                }}
+                style={{ width: '38px', fontSize: '0.75rem', padding: '1px 3px', borderRadius: '3px', border: '1px solid var(--ion-color-primary)', background: 'var(--ion-color-light)', color: 'var(--ion-color-dark)', textAlign: 'center' }}
+              />
+              <IonIcon
+                icon={checkmarkOutline}
+                style={{ fontSize: '15px', color: 'var(--ion-color-success)', cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); commitResize(); }}
+              />
+            </div>
+          )}
         </div>
-        <IonBadge color={isActive ? 'light' : 'medium'} style={{ flexShrink: 0, fontSize: '0.7rem' }}>
-          {tile.dimensions.width}×{tile.dimensions.depth}
-        </IonBadge>
+        {!isResizing && (
+          <IonBadge color={isActive ? 'light' : 'medium'} style={{ flexShrink: 0, fontSize: '0.7rem' }}>
+            {tile.dimensions.width}×{tile.dimensions.depth}
+          </IonBadge>
+        )}
+        <IonIcon
+          icon={createOutline}
+          title="Edit dimensions"
+          style={{
+            fontSize: '15px',
+            flexShrink: 0,
+            color: isResizing ? 'var(--ion-color-primary)' : isActive ? 'var(--ion-color-primary-contrast)' : 'var(--ion-color-medium)',
+            cursor: 'pointer',
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isResizing) { setResizingId(null); }
+            else { setResizeW(tile.dimensions.width); setResizeD(tile.dimensions.depth); setResizingId(tile.id); }
+          }}
+        />
         <IonIcon
           icon={trashOutline}
           style={{

@@ -59,7 +59,15 @@ export async function importSTL(file: File): Promise<{ tile: Tile; geometry: THR
   const scale = Math.min(scaleX, scaleZ);
   geometry.scale(scale, scale, scale);
 
-  // 5. Ensure normals exist (some binary STLs omit them).
+  // 5. Recompute after scaling — uniform scale may reduce actual cell count
+  //    (e.g. a 75mm × 36mm tile at scale 0.69 becomes ~52mm × 25mm → 2×1 not 3×1).
+  geometry.computeBoundingBox();
+  const scaledSize = new THREE.Vector3();
+  geometry.boundingBox!.getSize(scaledSize);
+  const finalWidth = Math.max(1, Math.round(scaledSize.x / GRID_SIZE));
+  const finalDepth = Math.max(1, Math.round(scaledSize.z / GRID_SIZE));
+
+  // 6. Ensure normals exist (some binary STLs omit them).
   if (!geometry.attributes.normal) {
     geometry.computeVertexNormals();
   }
@@ -67,7 +75,7 @@ export async function importSTL(file: File): Promise<{ tile: Tile; geometry: THR
   const tile: Tile = {
     id: crypto.randomUUID(),
     name: file.name.replace(/\.stl$/i, ''),
-    dimensions: { width: widthUnits, depth: depthUnits, height: size.y * scale },
+    dimensions: { width: finalWidth, depth: finalDepth, height: scaledSize.y },
     defaultRotation: 0,
     createdAt: Date.now(),
     folderId: null,

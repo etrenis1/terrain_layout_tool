@@ -205,6 +205,14 @@ export function useSceneManager(canvasRef: React.RefObject<HTMLCanvasElement | n
     return JSON.stringify(state, null, 2);
   }, [placedTiles]);
 
+  const invalidateTile = useCallback((tileId: string) => {
+    geometryCache.current.delete(tileId);
+    if (activeTileId === tileId) {
+      placementRef.current?.deactivate();
+      setActiveTileId(null);
+    }
+  }, [activeTileId]);
+
   const loadScene = useCallback(async (layout: Layout, tiles: Tile[]) => {
     const pm = placementRef.current;
     if (!pm) return;
@@ -235,5 +243,6 @@ export function useSceneManager(canvasRef: React.RefObject<HTMLCanvasElement | n
     removePlacedTile,
     serializeScene,
     loadScene,
+    invalidateTile,
   };
 }
